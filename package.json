@@ -32,7 +32,7 @@
   },
   "homepage": "https://github.com/chirag127/URL-Content-Saver-MCP-Server#readme",
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.22.0",
+    "@modelcontextprotocol/sdk": "^1.23.0",
     "express": "^5.1.0",
     "fs-extra": "^11.3.2",
     "node-fetch": "^3.3.2",
