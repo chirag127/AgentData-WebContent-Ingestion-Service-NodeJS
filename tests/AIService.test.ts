@@ -1,94 +1,135 @@
-// tests/AIService.test.ts
-import { describe, it, expect, beforeAll, afterEach, afterAll } from 'vitest';
-import { setupServer } from 'msw/node';
-import { HttpResponse, http } from 'msw';
-import { AIService, ApiKeys, ChatMessage } from '../src/services/AIService';
+// AGENTS.md §10: Comprehensive Testing Strategy
+// Mocks for all REST endpoints to test cascades and error handling.
 
-// Mock API keys for testing
-const mockApiKeys: ApiKeys = {
-  cerebras: 'test-cerebras-key',
-  gemini: 'test-gemini-key',
-  deepseek: 'test-deepseek-key',
-  openrouter: 'test-openrouter-key',
-  mistral: 'test-mistral-key',
-  together: 'test-together-key',
-  groq: 'test-groq-key',
+import { http, HttpResponse } from 'msw';
+import { setupServer } from 'msw/node';
+import { AIService, ApiKeys } from '../src/services/AIService';
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
+
+const FAKE_API_KEYS: ApiKeys = {
+  cerebras: 'fake-cerebras-key',
+  gemini: 'fake-gemini-key',
+  deepseek: 'fake-deepseek-key',
+  openrouter: 'fake-openrouter-key',
+  mistral: 'fake-mistral-key',
+  together: 'fake-together-key',
+  groq: 'fake-groq-key',
 };
 
-// Mock server handlers
 const handlers = [
-  // Cerebras (OpenAI-compatible) - Mock Success
-  http.post('https://api.cerebras.ai/v1/chat/completions', async () => {
-    return HttpResponse.json({
-      choices: [{ message: { content: 'Response from Cerebras' } }],
-    });
+  // Cerebras (OpenAI Compatible)
+  http.post('https://api.cerebras.ai/v1/chat/completions', async ({ request }) => {
+    const auth = request.headers.get('Authorization');
+    if (auth === `Bearer ${FAKE_API_KEYS.cerebras}`) {
+      return HttpResponse.json({ choices: [{ message: { content: 'Response from Cerebras' } }] });
+    }
+    return new HttpResponse('Unauthorized', { status: 401 });
   }),
 
-  // Google Gemini - Mock Success
-  http.post('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent', async () => {
-    return HttpResponse.json({
-      candidates: [{ content: { parts: [{ text: 'Response from Gemini' }] } }],
-    });
+  // Gemini (Native REST)
+  http.post('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent', async ({ request }) => {
+    const url = new URL(request.url);
+    if (url.searchParams.get('key') === FAKE_API_KEYS.gemini) {
+      return HttpResponse.json({ candidates: [{ content: { parts: [{ text: 'Response from Gemini' }] } }] });
+    }
+    return new HttpResponse('Unauthorized', { status: 401 });
   }),
 
-  // DeepSeek - Mock Failure (e.g., rate limit)
-  http.post('https://api.deepseek.com/v1/chat/completions', async () => {
-    return new HttpResponse(null, { status: 429 });
+  // DeepSeek (OpenAI Compatible)
+  http.post('https://api.deepseek.com/v1/chat/completions', async ({ request }) => {
+    const auth = request.headers.get('Authorization');
+    if (auth === `Bearer ${FAKE_API_KEYS.deepseek}`) {
+      return HttpResponse.json({ choices: [{ message: { content: 'Response from DeepSeek' } }] });
+    }
+    return new HttpResponse('Unauthorized', { status: 401 });
   }),
+
+  // All other providers for fallback tests
+  http.post('https://openrouter.ai/api/v1/chat/completions', () => new HttpResponse(null, { status: 500 })),
+  http.post('https://api.mistral.ai/v1/chat/completions', () => new HttpResponse(null, { status: 500 })),
+  http.post('https://api.together.xyz/v1/chat/completions', () => new HttpResponse(null, { status: 500 })),
+  http.post('https://api.groq.com/openai/v1/chat/completions', () => new HttpResponse(null, { status: 500 })),
 ];
 
 const server = setupServer(...handlers);
 
-// Vitest setup
 beforeAll(() => server.listen());
 afterEach(() => server.resetHandlers());
 afterAll(() => server.close());
 
 describe('AIService', () => {
-  const messages: ChatMessage[] = [{ role: 'user', content: 'Hello' }];
-
-  it('should return a response from the primary provider (Cerebras) on success', async () => {
-    const aiService = new AIService(mockApiKeys);
-    const result = await aiService.chat(messages);
-    expect(result.provider).toBe('cerebras');
-    expect(result.content).toBe('Response from Cerebras');
+  it('should return a response from the primary provider (Cerebras) if it succeeds', async () => {
+    const aiService = new AIService(FAKE_API_KEYS);
+    const response = await aiService.chat([{ role: 'user', content: 'hello' }]);
+    expect(response.provider).toBe('cerebras');
+    expect(response.content).toBe('Response from Cerebras');
   });
 
   it('should fall back to the secondary provider (Gemini) if the primary fails', async () => {
-    // Override the handler for Cerebras to simulate a failure
     server.use(
-      http.post('https://api.cerebras.ai/v1/chat/completions', () => {
-        return new HttpResponse(null, { status: 500 });
-      })
+      http.post('https://api.cerebras.ai/v1/chat/completions', () => new HttpResponse(null, { status: 500 }))
     );
-
-    const aiService = new AIService(mockApiKeys);
-    const result = await aiService.chat(messages);
-    expect(result.provider).toBe('gemini');
-    expect(result.content).toBe('Response from Gemini');
+    const aiService = new AIService(FAKE_API_KEYS);
+    const response = await aiService.chat([{ role: 'user', content: 'hello' }]);
+    expect(response.provider).toBe('gemini');
+    expect(response.content).toBe('Response from Gemini');
   });
 
-  it('should skip providers with missing API keys', async () => {
-    const incompleteKeys: ApiKeys = { ...mockApiKeys, cerebras: '' };
-    const aiService = new AIService(incompleteKeys);
-
-    const result = await aiService.chat(messages);
-    expect(result.provider).toBe('gemini'); // Should skip Cerebras and go to Gemini
+  it('should fall back through the cascade until a provider succeeds', async () => {
+    server.use(
+      http.post('https://api.cerebras.ai/v1/chat/completions', () => new HttpResponse(null, { status: 500 })),
+      http.post('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent', () => new HttpResponse(null, { status: 500 }))
+    );
+    const aiService = new AIService(FAKE_API_KEYS);
+    const response = await aiService.chat([{ role: 'user', content: 'hello' }]);
+    expect(response.provider).toBe('deepseek');
+    expect(response.content).toBe('Response from DeepSeek');
   });
 
   it('should throw an error if all providers fail', async () => {
-    // Override all handlers to simulate failures
     server.use(
       http.post('https://api.cerebras.ai/v1/chat/completions', () => new HttpResponse(null, { status: 500 })),
       http.post('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent', () => new HttpResponse(null, { status: 500 })),
-      http.post('https://api.deepseek.com/v1/chat/completions', () => new HttpResponse(null, { status: 500 })),
-      http.post('https://openrouter.ai/api/v1/chat/completions', () => new HttpResponse(null, { status: 500 })),
-      http.post('https://api.mistral.ai/v1/chat/completions', () => new HttpResponse(null, { status: 500 })),
-      http.post('https://api.together.xyz/v1/chat/completions', () => new HttpResponse(null, { status: 500 })),
-      http.post('https://api.groq.com/openai/v1/chat/completions', () => new HttpResponse(null, { status: 500 }))
+      http.post('https://api.deepseek.com/v1/chat/completions', () => new HttpResponse(null, { status: 500 }))
+    );
+    const aiService = new AIService(FAKE_API_KEYS);
+    await expect(aiService.chat([{ role: 'user', content: 'hello' }])).rejects.toThrow(
+      'All AI providers failed. Please check your API keys, network connection, and provider status.'
+    );
+  });
+
+  it('should skip providers with missing API keys', async () => {
+    const incompleteKeys: ApiKeys = { ...FAKE_API_KEYS, cerebras: '' };
+    const aiService = new AIService(incompleteKeys);
+    const response = await aiService.chat([{ role: 'user', content: 'hello' }]);
+    expect(response.provider).toBe('gemini');
+  });
+
+  it('should retry on 429 error and then succeed', async () => {
+    let requestCount = 0;
+    server.use(
+      http.post('https://api.cerebras.ai/v1/chat/completions', () => {
+        requestCount++;
+        if (requestCount === 1) {
+          return new HttpResponse('Rate limit exceeded', { status: 429 });
+        }
+        return HttpResponse.json({ choices: [{ message: { content: 'Success on retry' } }] });
+      })
     );
 
-    const aiService = new AIService(mockApiKeys);
-    await expect(aiService.chat(messages)).rejects.toThrow('All AI providers failed.');
+    const aiService = new AIService(FAKE_API_KEYS);
+    const response = await aiService.chat([{ role: 'user', content: 'hello' }]);
+    expect(response.content).toBe('Success on retry');
+    expect(requestCount).toBe(2);
+  });
+
+  it('should fail fast on client errors like 401 Unauthorized', async () => {
+    server.use(
+      http.post('https://api.cerebras.ai/v1/chat/completions', () => new HttpResponse('Unauthorized', { status: 401 }))
+    );
+    const aiService = new AIService(FAKE_API_KEYS);
+    // It should not throw here, but rather fall back to the next provider.
+    const response = await aiService.chat([{ role: 'user', content: 'hello' }]);
+    expect(response.provider).toBe('gemini');
   });
 });

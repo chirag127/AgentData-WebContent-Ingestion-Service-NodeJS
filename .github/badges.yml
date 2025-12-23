@@ -1,0 +1,39 @@
+# .github/badges.yml
+# Shield.io badge configurations as per AGENTS.md §5
+# This file is used to maintain a consistent set of professional badges for the README.
+
+badges:
+  - name: ci-workflow
+    label: 'CI/CD Pipeline'
+    message: 'Passing'
+    color: 'green'
+    logo: 'githubactions'
+    url: 'https://github.com/USERNAME/REPONAME/actions/workflows/ci.yml' # Placeholder URL
+  - name: license
+    label: 'License'
+    message: 'CC BY-NC 4.0'
+    color: 'blue'
+    url: 'LICENSE'
+  - name: version
+    label: 'Version'
+    message: '0.1.0' # Placeholder, will be updated via CI
+    color: 'informational'
+  - name: issues
+    label: 'Open Issues'
+    color: 'orange'
+    url: 'https://github.com/USERNAME/REPONAME/issues' # Placeholder URL
+  - name: pull-requests
+    label: 'Pull Requests'
+    message: 'Welcome'
+    color: 'brightgreen'
+    url: 'https://github.com/USERNAME/REPONAME/pulls' # Placeholder URL
+  - name: top-language
+    label: 'TypeScript'
+    message: '100%'
+    color: 'blue'
+    logo: 'typescript'
+  - name: framework
+    label: 'Vite'
+    message: 'v7'
+    color: 'purple'
+    logo: 'vite'
